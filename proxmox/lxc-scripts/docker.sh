@@ -23,7 +23,7 @@ var_cpu="2"
 var_ram="512"
 var_disk="2"
 var_os="debian"
-var_version="12" # Changed to 12 (Bookworm) for repository compatibility
+var_version="12"
 var_unprivileged="1"
 var_hostname="$HN"
 
@@ -37,29 +37,30 @@ start
 build_container
 
 # 5. Custom Post-Installation Block
-msg_info "Configuring 'ubuntu' user and Docker Repositories"
+msg_info "Configuring 'ubuntu' user and Fixing Docker Repositories"
 
 # Set Timezone
 $STD timedatectl set-timezone Asia/Kolkata
 
-# Force Docker Repo to Bookworm (prevents the Trixie 404 error)
-$STD apt-get update
-$STD apt-get install -y ca-certificates curl gnupg
-$STD mkdir -p /etc/apt/keyrings
+# --- THE FIX: Clean up the library's 'Trixie' mess before running any updates ---
+msg_info "Fixing Apt Sources..."
+rm -f /etc/apt/sources.list.d/docker.list
+
+# Manually add the Bookworm repo (which actually exists)
+mkdir -p /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list
+
+# Now we run update safely
 $STD apt-get update
+$STD apt-get install -y ca-certificates curl gnupg docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
-# Install Docker packages explicitly using the verified repo
-$STD apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
-
-# Create user 'ubuntu'
+# 6. User & Directory Setup
 if ! id "ubuntu" &>/dev/null; then
     $STD useradd -m -s /bin/bash ubuntu
     echo "ubuntu:password" | $STD chpasswd
 fi
 
-# Permissions and directory setup
 $STD usermod -aG docker ubuntu
 $STD mkdir -p /home/ubuntu/.docker
 $STD chown -R ubuntu:ubuntu /home/ubuntu/.docker
@@ -67,7 +68,7 @@ $STD chmod 700 /home/ubuntu/.docker
 
 msg_ok "Post-install configuration complete"
 
-# 6. Finalization
+# 7. Finalization
 description
 msg_ok "Completed successfully!\n"
 
