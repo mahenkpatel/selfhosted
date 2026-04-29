@@ -8,9 +8,16 @@ echo -e "${YW}Enter a name for your new Docker LXC:${CL}"
 read -r HN
 HN=${HN:-docker-lxc} 
 
-# 3. Define Resource & Automation Variables
+# 3. Automation Variables (Bypassing ALL prompts)
 APP="Docker"
-NSAPP="true"      # Skip initial confirmation
+NSAPP="true"
+export STABLE="yes"
+export INSTALL_PORTAINER="no"
+export INSTALL_PORTAINER_AGENT="no"
+export EXPOSE_DOCKER="n"  # Pre-answers the TCP socket question
+export DNS_SERVERS="8.8.8.8 1.1.1.1"
+
+# Resource Overrides
 var_tags="docker"
 var_cpu="2"
 var_ram="512"
@@ -19,14 +26,6 @@ var_os="debian"
 var_version="13"
 var_unprivileged="1"
 var_hostname="$HN"
-
-# --- THE FIX: PRE-ANSWER PORTAINER QUESTIONS ---
-# Setting these to "no" prevents the library from asking
-export INSTALL_PORTAINER="no"
-export INSTALL_PORTAINER_AGENT="no"
-
-# --- DNS FIX: Ensure resolution works inside the build context ---
-export DNS_SERVERS="8.8.8.8 1.1.1.1"
 
 # 4. Initialize Build
 header_info "$APP"
@@ -38,30 +37,32 @@ start
 build_container
 
 # 5. Custom Post-Installation Block
-msg_info "Configuring 'ubuntu' user, Timezone, and Permissions"
+msg_info "Configuring 'ubuntu' user and Docker Repositories"
 
-# Set Timezone
+# Ensure Timezone is set
 $STD timedatectl set-timezone Asia/Kolkata
 
-# Create user 'ubuntu'
+# RE-ADD REPO (Fixes the "No installation candidate" error)
+$STD apt-get update
+$STD apt-get install -y ca-certificates curl gnupg
+$STD mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian Trixie stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+$STD apt-get update
+
+# Final attempt to ensure Docker is fully installed and User is set up
+if ! getent group docker > /dev/null 2>&1; then
+    msg_info "Finalizing Docker installation..."
+    $STD apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+fi
+
+# Create user 'ubuntu' and add to group
 if ! id "ubuntu" &>/dev/null; then
     $STD useradd -m -s /bin/bash ubuntu
     echo "ubuntu:password" | $STD chpasswd
 fi
 
-# Add to Docker group and setup .docker directory
-# (Docker is now installed correctly because DNS is forced)
-if getent group docker > /dev/null 2>&1; then
-    $STD usermod -aG docker ubuntu
-    msg_ok "User 'ubuntu' added to docker group"
-else
-    # Fallback install if the library step failed
-    msg_info "Docker group missing, running manual install..."
-    $STD apt-get update
-    $STD apt-get install -y docker-ce docker-ce-cli containerd.io
-    $STD usermod -aG docker ubuntu
-fi
-
+$STD usermod -aG docker ubuntu
 $STD mkdir -p /home/ubuntu/.docker
 $STD chown -R ubuntu:ubuntu /home/ubuntu/.docker
 $STD chmod 700 /home/ubuntu/.docker
