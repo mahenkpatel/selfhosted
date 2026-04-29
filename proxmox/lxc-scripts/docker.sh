@@ -10,7 +10,7 @@ HN=${HN:-docker-lxc}
 
 # 3. Define Resource & Automation Variables
 APP="Docker"
-NSAPP="true"      # Skip the "Do you want to proceed?" prompt
+NSAPP="true"      # Skip initial confirmation
 var_tags="docker"
 var_cpu="2"
 var_ram="512"
@@ -20,30 +20,48 @@ var_version="13"
 var_unprivileged="1"
 var_hostname="$HN"
 
+# --- THE FIX: PRE-ANSWER PORTAINER QUESTIONS ---
+# Setting these to "no" prevents the library from asking
+export INSTALL_PORTAINER="no"
+export INSTALL_PORTAINER_AGENT="no"
+
+# --- DNS FIX: Ensure resolution works inside the build context ---
+export DNS_SERVERS="8.8.8.8 1.1.1.1"
+
 # 4. Initialize Build
 header_info "$APP"
 variables
 color
 catch_errors
 
-# Executes the container creation and Docker installation
 start
 build_container
 
 # 5. Custom Post-Installation Block
 msg_info "Configuring 'ubuntu' user, Timezone, and Permissions"
 
-# Set Timezone (Defaulted to Asia/Kolkata, change if needed)
+# Set Timezone
 $STD timedatectl set-timezone Asia/Kolkata
 
-# Create user 'ubuntu' with password 'password'
+# Create user 'ubuntu'
 if ! id "ubuntu" &>/dev/null; then
     $STD useradd -m -s /bin/bash ubuntu
     echo "ubuntu:password" | $STD chpasswd
 fi
 
 # Add to Docker group and setup .docker directory
-$STD usermod -aG docker ubuntu
+# (Docker is now installed correctly because DNS is forced)
+if getent group docker > /dev/null 2>&1; then
+    $STD usermod -aG docker ubuntu
+    msg_ok "User 'ubuntu' added to docker group"
+else
+    # Fallback install if the library step failed
+    msg_info "Docker group missing, running manual install..."
+    $STD apt-get update
+    $STD apt-get install -y docker-ce docker-ce-cli containerd.io
+    $STD usermod -aG docker ubuntu
+fi
+
 $STD mkdir -p /home/ubuntu/.docker
 $STD chown -R ubuntu:ubuntu /home/ubuntu/.docker
 $STD chmod 700 /home/ubuntu/.docker
@@ -55,5 +73,3 @@ description
 msg_ok "Completed successfully!\n"
 
 echo -e "${CREATING}${GN}${HN} setup has been successfully initialized!${CL}"
-echo -e "${INFO}${YW} Timezone set to: $(cat /etc/timezone)${CL}"
-echo -e "${INFO}${YW} Access the container via Proxmox console or 'pct enter'${CL}"
